@@ -1,0 +1,87 @@
+pipeline {
+    
+    agent any
+    
+    environment {
+        IMAGE_NAME   = "ec2-18-208-6-67.compute-1.amazonaws.com:8084/nginx"
+        NEXUS_DOCRED = credentials('nexusdocred')
+        GIT_BRANCH       = 'main'
+    }
+     options { 
+            buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '10'))
+            skipDefaultCheckout()
+            disableConcurrentBuilds()
+    } 
+    stages {
+        stage('Cleanup Workspace'){
+            steps {
+               println "${env.BRANCH_NAME}"
+               cleanWs()
+               //clean up temp directory
+               dir("${env.WORKSPACE}@tmp") {
+                     deleteDir()
+               }
+               //clean up script directory
+               dir("${env.WORKSPACE}@script") {
+                     deleteDir()
+               }
+               dir("${env.WORKSPACE}@script@tmp") {
+                     deleteDir()
+               }
+               step([$class: 'WsCleanup']) 
+               }
+               }
+         stage('checkoutthecode'){
+            steps {
+               //git credentialsId: 'BB_Jenkins', url: 'https://naveen_raghunandan@bitbucket.org/cloudzenix/af_jenkins_pipeline.git'
+               git credentialsId: 'MY_BB_CRED', url: 'https://SreekantReddy@bitbucket.org/cloudzenix/af_jenkins_pipeline.git'
+               }
+               }
+    // Building Docker images
+    stage('Building image') {
+      steps {
+          script {
+                    def version = readFile('VERSION')
+                    echo "$version"
+                    def TAG_VERSION = version
+                    echo "$TAG_VERSION"
+                    sh "docker build -t ${IMAGE_NAME}:${TAG_VERSION} ."
+                 
+                 }
+           }
+     }
+  stage('upload image to Nexus'){
+          steps {
+            script {
+               def version = readFile('VERSION')
+               echo "$version"
+               def TAG_VERSION = version
+               echo "$TAG_VERSION"
+               withCredentials([string(credentialsId: 'nexus_Scrt', variable: 'nexus_Scrt')]) {
+                sh "docker login ec2-18-208-6-67.compute-1.amazonaws.com:8084/ -u admin -p ${nexus_Scrt}"    
+                sh "docker push ${IMAGE_NAME}:${TAG_VERSION}"
+                
+                 }
+              }
+           }
+        }
+        
+   stage('pushing a tag to repo'){
+          steps {
+            script {
+               def version = readFile('VERSION')
+                withCredentials([gitUsernamePassword(credentialsId: 'BB_Jenkins', gitToolName: 'Default')]) { 
+                 sh """
+                 echo "TAG is : ${version}"
+                 git tag -a ${version} -m "tag: ${version} is created"
+                 echo "*** Created tag ${version} in ${GIT_BRANCH}" 
+                 git push origin --tags
+                 
+                """
+                }
+              }
+           }
+        }        
+    }
+}
+

@@ -1,0 +1,116 @@
+pipeline {
+    
+    agent any
+    
+    environment {
+        IMAGE_NAME   = "ec2-18-208-6-67.compute-1.amazonaws.com:8084/nginx"
+        NEXUS_DOCRED = credentials('nexusdocred')
+        GIT_BRANCH       = 'main'
+        couchDB_URL		= 'https://couchdb.cloudzenix.online'
+        couch_api_svc	= 'cloudzenix'
+        couchDB_env		= 'czdevelopment'
+    }
+     options { 
+            buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '10'))
+            skipDefaultCheckout()
+            disableConcurrentBuilds()
+    } 
+    stages {
+        stage('Cleanup Workspace'){
+            steps {
+               println "${env.BRANCH_NAME}"
+               cleanWs()
+               //clean up temp directory
+               dir("${env.WORKSPACE}@tmp") {
+                     deleteDir()
+               }
+               //clean up script directory
+               dir("${env.WORKSPACE}@script") {
+                     deleteDir()
+               }
+               dir("${env.WORKSPACE}@script@tmp") {
+                     deleteDir()
+               }
+               step([$class: 'WsCleanup']) 
+               }
+               }
+         stage('checkoutthecode'){
+            steps {
+               //git credentialsId: 'BB_Jenkins', url: 'https://naveen_raghunandan@bitbucket.org/cloudzenix/af_jenkins_pipeline.git'
+               git credentialsId: 'MY_BB_CRED', url: 'https://SreekantReddy@bitbucket.org/cloudzenix/af_jenkins_pipeline.git'
+               }
+               }
+               stage("Auto-increment TAG") {
+			steps {
+				script {
+              withCredentials([string(credentialsId: 'Couchdb_Sert', variable: 'Couchdb_Sert')]) {
+   				sh '''
+					ID=$(curl -k -s -u cloudzenix:${Couchdb_Sert} -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r ._id)
+					REV=$(curl -k -s -u cloudzenix:${Couchdb_Sert} -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r ._rev)
+					TAG_Major=$(curl -k -s -u cloudzenix:${Couchdb_Sert} -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r .Tag_Major)
+					TAG_Minor=$(curl -k -s -u cloudzenix:${Couchdb_Sert} -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r .Tag_Minor)
+					current_tag="$TAG_Major.$TAG_Minor"
+					echo "current_tag: $current_tag"
+					if [[ $TAG_Minor -le "98" ]]
+					then
+						echo "incrementing Minor value."
+						TAG_Minor=$(($TAG_Minor+1))
+						TAG="$TAG_Major.$TAG_Minor"
+						echo "TAG after increment: $TAG"
+					else
+						echo "Minor tag exceeded 99. So, Incrementing Major value."
+						TAG_Major=$(($TAG_Major+1))
+						TAG_Minor="0"
+						TAG="$TAG_Major.$TAG_Minor"
+						echo "TAG after increment: $TAG"
+					fi
+					curl -k -s -u cloudzenix:${Couchdb_Sert} -X PUT "${couchDB_URL}/${couch_api_svc}/${couchDB_env}" -d "{\\"_id\\":\\"$ID\\",\\"_rev\\":\\"$REV\\",\\"Tag_Major\\":\\"$TAG_Major\\",\\"Tag_Minor\\":\\"$TAG_Minor\\",\\"TAG\\":\\"$TAG\\"}"
+					'''
+					env.TAG = sh(script: 'curl -k -s -u cloudzenix:${Couchdb_Sert} -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r .TAG', returnStdout: true)
+					env.TAG = "${couchDB_env}"+"-"+"${TAG}"
+					echo "TAG Value: ${TAG}"
+                    }
+				}
+			}
+		}
+    // Building Docker images
+    stage('Building image') {
+      steps {
+          script {
+                    def version = readFile('VERSION')
+                    echo "$version"
+                    def TAG_VERSION = version
+                    echo "$TAG_VERSION"
+                    sh "docker build -t ${IMAGE_NAME}:${TAG_VERSION} ."
+                 
+                 }
+           }
+     }
+  stage('sonarqube image scan'){
+             steps{
+             script {
+                    def version = readFile('VERSION')
+                    echo "$version"
+                    def TAG_VERSION = version
+                    echo "$TAG_VERSION"
+                    sh "docker scan ${IMAGE_NAME}:${TAG_VERSION} -y"
+                  }
+             }
+        }
+  stage('upload image to Nexus'){
+          steps {
+            script {
+               def version = readFile('VERSION')
+               echo "$version"
+               def TAG_VERSION = version
+               echo "$TAG_VERSION"
+               withCredentials([string(credentialsId: 'nexus_Scrt', variable: 'nexus_Scrt')]) {
+                sh "docker login ec2-18-208-6-67.compute-1.amazonaws.com:8084/ -u admin -p ${nexus_Scrt}"    
+                sh "docker push ${IMAGE_NAME}:${TAG_VERSION}"
+                
+                 }
+              }
+           }
+        } 
+    }
+ }

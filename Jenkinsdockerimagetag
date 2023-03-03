@@ -1,0 +1,72 @@
+pipeline {
+    agent any
+    environment {
+           GIT_BRANCH       = 'main'
+           BITBUCKET_CRED   = 'BB_Jenkins'
+           GIT_REPO_URL     = 'git@bitbucket.org:cloudzenix/af_jenkins_pipeline.git'
+           WORKSPACE        =  pwd()
+           DOCKERHUB_CRED   = credentials('Docker-hub-tocken')
+           IMAGE_NAME       = 'cloudzenix/nginx'
+           
+    }
+    options { 
+            buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '10'))
+            skipDefaultCheckout()
+            disableConcurrentBuilds()
+    } 
+    stages {
+        stage('Cleanup Workspace'){
+            steps {
+               println "${env.BRANCH_NAME}"
+               cleanWs()
+               //clean up temp directory
+               dir("${env.WORKSPACE}@tmp") {
+                     deleteDir()
+               }
+               //clean up script directory
+               dir("${env.WORKSPACE}@script") {
+                     deleteDir()
+               }
+               dir("${env.WORKSPACE}@script@tmp") {
+                     deleteDir()
+               }
+               step([$class: 'WsCleanup']) 
+               }
+               }
+         stage('checkoutthecode'){
+            steps {
+               git credentialsId: 'BB_Jenkins', url: 'https://naveen_raghunandan@bitbucket.org/cloudzenix/af_jenkins_pipeline.git'
+               }
+               }
+         stage('Build') {
+            steps {
+                script {
+                    def version = readFile('VERSION')
+                    //def versions = version.split('\\.')
+                    //def major = versions[0]
+                    //def minor = versions[0] + '.' + versions[1]
+                    //def patch = version.trim()
+                    echo "$version"
+                    def TAG_VERSION = version
+                    echo "$TAG_VERSION"
+                  docker.withRegistry('', 'Docker-hub-tocken') {
+                  
+                  sh "docker build -t ${env.IMAGE_NAME}:${TAG_VERSION} ."
+                  sh "docker push ${env.IMAGE_NAME}:${TAG_VERSION}"
+                  
+                  
+                     //def image = docker.build('cloudzenix/nginx:latest')
+                    //sh "docker push ${env.IMAGE_NAME}:${TAG_VERSION}"
+                  //sh "docker tag  ${env.IMAGE_NAME}:$version"
+                //sh "docker push ${env.IMAGE_NAME}:$version"
+                      
+                       //image.push()
+                       //image.push(major)
+                       //image.push(minor)
+                       //image.push(patch)
+                    }
+                }
+            }
+        }  
+    }
+}
